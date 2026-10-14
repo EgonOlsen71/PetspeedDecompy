@@ -9,8 +9,14 @@ if not exist "%ROOT%\pcode\*.prg" (
 if not exist "%OUTPUT%" mkdir "%OUTPUT%" || exit /b 1
 set "FAILED=0"
 for %%F in ("%ROOT%\pcode\*.prg") do (
-    echo Decompiling %%~nxF
-    python "%ROOT%\bin\decompile.py" "%%~fF" -o "%OUTPUT%\%%~nF.decompiled"
+    call :decode "%%~fF"
     if errorlevel 1 set "FAILED=1"
 )
 exit /b %FAILED%
+
+:decode
+set "NAME=%~n1"
+if /I "%NAME:~-11%"==".decompiled" exit /b 0
+echo Decompiling %~nx1
+python "%ROOT%\bin\decompile.py" "%~f1" -o "%OUTPUT%\%NAME%.decompiled"
+exit /b %ERRORLEVEL%

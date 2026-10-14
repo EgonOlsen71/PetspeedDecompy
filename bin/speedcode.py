@@ -24,7 +24,7 @@ _HANDLERS = {
     0x8d: 0x11a5, 0x8f: 0x11bd, 0x90: 0x11ea, 0x91: 0x1dd0,
     0x92: 0x1e39, 0x93: 0x120b, 0x94: 0x1202, 0x95: 0x1226,
     0x96: 0x122f, 0x97: 0x1420, 0x98: 0x1d4a, 0x99: 0x1d4e,
-    0x9b: 0x1d56, 0x9c: 0x1d41, 0x9d: 0x1d38,
+    0x9a: 0x1d52, 0x9b: 0x1d56, 0x9c: 0x1d41, 0x9d: 0x1d38,
     0x9e: 0x13fc, 0x9f: 0x1f84,
     0xa0: 0x1f84, 0xa1: 0x21df, 0xa2: 0x1fe2, 0xa3: 0x1fe2,
     0xa4: 0x23e5, 0xa5: 0x201d, 0xa6: 0x201d,
@@ -110,10 +110,10 @@ def instructions(image: Image) -> list[Instruction]:
             if length < 4 or length % 2 or pc + length > end:
                 raise ValueError(f"invalid ON table at ${address:04X}")
             table = image.payload(pc + 1, length - 1)
-            if table[0] != 0xd1:
-                raise ValueError(f"invalid ON GOTO at ${address:04X}")
-            arg = tuple(int.from_bytes(table[i:i + 2], "little")
-                        for i in range(1, len(table), 2))
+            if table[0] not in (0xd1, 0xd2):
+                raise ValueError(f"invalid ON branch at ${address:04X}")
+            arg = (table[0], tuple(int.from_bytes(table[i:i + 2], "little")
+                                   for i in range(1, len(table), 2)))
             pc += length
         result.append(Instruction(address, op, arg, pc))
     if len(result) < 2 or (result[-2].opcode, result[-1].opcode) != (0xd3, 0xd3):
@@ -153,8 +153,8 @@ def array_layout(image: Image, code: list[Instruction]):
         op = ins.opcode
         if op == 0xfc:
             selected = int.from_bytes(ins.argument, "little")
-        elif op in (0x9f, 0xa0, 0xa2, 0xa3) and selected is not None:
-            width = 5 if op in (0x9f, 0xa0) else 2
+        elif op in (0x9f, 0xa0, 0xa2, 0xa3, 0xa5, 0xa6) and selected is not None:
+            width = 5 if op in (0x9f, 0xa0) else 3 if op in (0xa5, 0xa6) else 2
             if selected in kinds and kinds[selected] != width:
                 raise ValueError(f"conflicting array type at ${selected:04X}")
             kinds[selected] = width
@@ -238,7 +238,7 @@ def decode(image: Image) -> list[BasicLine]:
     if not 0x2800 < scalar_end <= array_start:
         raise ValueError("invalid variable records")
     layouts, aliases, bases = array_layout(image, code)
-    arrays = {base: symbols.name("array", base, "%" if width == 2 else "")
+    arrays = {base: symbols.name("array", base, "%" if width == 2 else "$" if width == 3 else "")
               for base, (width, _) in layouts.items()}
     dimensions = [f"DIM {arrays[base]}({','.join(str(size - 1) for size in layouts[base][1])})"
                   for base in bases]
@@ -370,12 +370,13 @@ def decode(image: Image) -> list[BasicLine]:
                 second = value
         elif op in (0x81, 0x82, 0x83, 0x84, 0x85, 0x88, 0x89,
                     0x8b, 0x8c, 0x8d, 0x8f, 0x91, 0x92, 0x93,
-                    0x94, 0x95, 0x96, 0x98, 0x99, 0x9b, 0x9d):
+                    0x94, 0x95, 0x96, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d):
             symbol = {0x81: "-", 0x82: "+", 0x83: "*", 0x84: "/", 0x85: "^",
                       0x88: "-", 0x89: "/", 0x8b: ">", 0x8c: "<",
                       0x8d: "AND", 0x8f: "OR", 0x91: "+", 0x92: "+",
                       0x93: "<>", 0x94: "=", 0x95: ">=", 0x96: "<=",
-                      0x98: ">", 0x99: "<", 0x9b: "<=", 0x9d: "="}[op]
+                       0x98: ">", 0x99: "<", 0x9a: ">=", 0x9b: "<=",
+                       0x9c: "<>", 0x9d: "="}[op]
             left, right = need(second, ins), need(first, ins)
             if op in (0x88, 0x89, 0x92):
                 left, right = right, left
@@ -384,10 +385,10 @@ def decode(image: Image) -> list[BasicLine]:
             first = f"(-{need(first, ins)})"
         elif op == 0x90:
             first = f"(NOT {need(first, ins)})"
-        elif op in (0xb5, 0xb6, 0xbb, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7):
+        elif op in (0xb5, 0xb6, 0xb8, 0xbb, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7):
             name = {0xb5: "INT", 0xb6: "ABS", 0xbb: "RND", 0xc2: "PEEK",
                     0xc3: "LEN", 0xc4: "STR$", 0xc5: "VAL", 0xc6: "ASC",
-                    0xc7: "CHR$"}[op]
+                    0xc7: "CHR$", 0xb8: "FRE"}[op]
             first = f"{name}({need(first, ins)})"
         elif op in (0xdd, 0xde):
             first = f"{'LEFT$' if op == 0xdd else 'RIGHT$'}({need(second, ins)},{need(first, ins)})"
@@ -442,14 +443,14 @@ def decode(image: Image) -> list[BasicLine]:
                 emit(address, "NEXT")
         elif op == 0xfc:
             selected = int.from_bytes(arg, "little")
-        elif op in (0x9f, 0xa0, 0xa2, 0xa3):
+        elif op in (0x9f, 0xa0, 0xa2, 0xa3, 0xa5, 0xa6):
             if selected is None or selected not in layouts and selected not in aliases:
                 raise ValueError(f"array access without base at ${address:04X}")
             width = layouts[aliases[selected][0] if selected in aliases else selected][0]
-            if width != (5 if op in (0x9f, 0xa0) else 2):
+            if width != (5 if op in (0x9f, 0xa0) else 3 if op in (0xa5, 0xa6) else 2):
                 raise ValueError(f"array element type mismatch at ${address:04X}")
             element = indexed(selected, need(first, ins))
-            if op in (0x9f, 0xa2):
+            if op in (0x9f, 0xa2, 0xa5):
                 first = element
             else:
                 pointer = element
@@ -486,8 +487,10 @@ def decode(image: Image) -> list[BasicLine]:
             prefix = f"IF ({need(first, ins)})=0 THEN GOTO " if op == 0xd4 else "GOTO " if op == 0xd1 else "GOSUB "
             emit(address, prefix + f"@{target:04X}")
         elif op == 0xe2:
-            targets.update(arg)
-            emit(address, f"ON {need(first, ins)} GOTO " + ",".join(f"@{target:04X}" for target in arg))
+            branch, choices = arg
+            targets.update(choices)
+            emit(address, f"ON {need(first, ins)} {'GOTO' if branch == 0xd1 else 'GOSUB'} "
+                 + ",".join(f"@{target:04X}" for target in choices))
         elif op == 0xd8:
             emit(address, "RETURN")
         elif op == 0xd3:
@@ -520,14 +523,19 @@ def decode(image: Image) -> list[BasicLine]:
             if arg[0] >= 18:
                 raise ValueError(f"unknown system selector ${arg[0]:02X} at ${address:04X}")
             system_handler = image.word(0x19ba + 2 * arg[0])
-            if system_handler == 0x25bb:
+            if system_handler == 0x25bb and arg[0] == 6:
                 first = "TI"
-            elif system_handler == 0x25ee:
+            elif system_handler == 0x25bb and arg[0] == 11:
+                second = "TI"
+            elif system_handler == 0x25ee and arg[0] == 8:
                 first = "TI$"
-            elif system_handler == 0x2626:
+            elif system_handler == 0x25ee and arg[0] == 13:
+                second = "TI$"
+            elif system_handler == 0x2626 and arg[0] == 14:
                 emit(address, f"TI$={need(first, ins)}")
             else:
-                raise ValueError(f"untranslated system handler ${system_handler:04X} at ${address:04X}")
+                raise ValueError(f"untranslated system selector ${arg[0]:02X} "
+                                 f"(handler ${system_handler:04X}) at ${address:04X}")
         elif op in (0xd0, 0xcf, 0xe7):
             if not printing:
                 print_start = address

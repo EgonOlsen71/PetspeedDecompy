@@ -30,6 +30,7 @@ found=0
 failed=0
 for input in "$ROOT"/pcode/*.prg; do
     [ -f "$input" ] || continue
+    case "$input" in *.decompiled.prg) continue ;; esac
     found=1
     name=${input##*/}
     name=${name%.prg}

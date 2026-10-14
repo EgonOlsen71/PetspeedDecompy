@@ -31,7 +31,7 @@ def data_clause(body):
 
 class ImageTests(unittest.TestCase):
     def test_compiled_examples(self):
-        for path in FIXTURES.glob("*.prg"):
+        for path in FIXTURES.glob("*.wow.prg"):
             with self.subTest(path=path.name):
                 image = read_image(path.read_bytes())
                 self.assertEqual(image.code[-2:], b"\xd3\xd3")
@@ -50,9 +50,9 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(interpreter.code_start, 0x373d)
 
     def test_data_items_and_output_lines(self):
-        expected = {"compsuite.wow.prg": 204, "laby.wow.prg": 385,
-                    "lyrix.wow.prg": 1029}
-        for path in FIXTURES.glob("*.prg"):
+        expected = {"compsuite.wow.prg": 204, "demo.wow.prg": 87,
+                    "laby.wow.prg": 385, "lyrix.wow.prg": 1029}
+        for path in FIXTURES.glob("*.wow.prg"):
             with self.subTest(path=path.name):
                 items = read_image(path.read_bytes()).data_items()
                 self.assertEqual(len(items), expected.get(path.name, 0))
@@ -63,7 +63,7 @@ class ImageTests(unittest.TestCase):
                 self.assertEqual(output_fields, [item.text for item in items])
         items = read_image((FIXTURES / "compsuite.wow.prg").read_bytes()).data_items()
         self.assertEqual([item.text for item in items[:3]], ["120", "173", "20"])
-        for name in ("compsuite", "laby", "lyrix"):
+        for name in ("compsuite", "demo", "laby", "lyrix"):
             with self.subTest(source=name):
                 if not (FIXTURES / f"{name}.wow.prg").exists():
                     continue
@@ -176,6 +176,15 @@ class ImageTests(unittest.TestCase):
         self.assertIn("GOSUB", text)
         self.assertEqual(read_program(write_program(lines)), lines)
 
+    def test_decode_demo_fixture(self):
+        lines = decompile((FIXTURES / "demo.wow.prg").read_bytes())
+        text = listing(lines)
+        self.assertIn("bASIC-bOSS", text)
+        self.assertIn("GOSUB", text)
+        self.assertIn('TI$<"000040"', text)
+        self.assertIn("PRINT (TI/60)", text)
+        self.assertEqual(read_program(write_program(lines)), lines)
+
     def test_compiled_data_is_attached_once(self):
         for name in ("compsuite", "laby"):
             with self.subTest(program=name):
@@ -201,6 +210,7 @@ class ImageTests(unittest.TestCase):
 
     def test_supported_fixture_branches_and_output(self):
         expected = {"balls": ("NUMBER OF BALL", "POKE 53280", "RND("),
+                    "demo": ("bASIC-bOSS", "ON ", "FRE(0)"),
                     "lines": ("POKE 56576", "GOSUB", "RND("),
                     "divide": ("TEILE...", "GOSUB", "GET "),
                     "fiddly": ("BIT FIDDLER", "GET ", "POKE 646"),
@@ -208,7 +218,7 @@ class ImageTests(unittest.TestCase):
                     "compsuite": ("TESTS FAILED", "ON ", "WAIT 198,1"),
                     "laby": ("POKE 56576", "RUN", "READ "),
                     "snake": ("AUA!", "GOSUB", "DIM ")}
-        for name in ("balls", "lines", "divide", "fiddly", "scan", "compsuite", "laby", "snake"):
+        for name in ("balls", "demo", "lines", "divide", "fiddly", "scan", "compsuite", "laby", "snake"):
             with self.subTest(program=name):
                 lines = decompile((FIXTURES / f"{name}.wow.prg").read_bytes())
                 self.assertEqual(read_program(write_program(lines)), lines)
@@ -219,7 +229,7 @@ class ImageTests(unittest.TestCase):
                 numbers = {line.number for line in lines}
                 for target in re.findall(r"\b(?:GOTO|GOSUB|THEN)\s+(\d+)", text):
                     self.assertIn(int(target), numbers)
-                for table in re.findall(r"\bON\s+[^\n]*?\bGOTO\s+([\d,]+)", text):
+                for table in re.findall(r"\bON\s+[^\n]*?\b(?:GOTO|GOSUB)\s+([\d,]+)", text):
                     for target in table.split(","):
                         self.assertIn(int(target), numbers)
 
@@ -257,7 +267,7 @@ class ImageTests(unittest.TestCase):
 
     def test_cli_exports_real_compiled_fixture(self):
         with TemporaryDirectory() as directory:
-            for name in ("balls", "lines", "divide", "fiddly", "scan", "compsuite", "laby", "snake"):
+            for name in ("balls", "demo", "lines", "divide", "fiddly", "scan", "compsuite", "laby", "snake"):
                 with self.subTest(program=name):
                     source = Path(directory) / f"{name}.wow.prg"
                     original = (FIXTURES / source.name).read_bytes()
